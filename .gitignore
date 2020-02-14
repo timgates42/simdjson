@@ -57,6 +57,7 @@ objs
 /allparsingcompetition
 /basictests
 /benchfeatures
+/benchmark/bench_parse_call
 /benchmark/parse
 /benchmark/parse_stream
 /benchmark/perfdiff

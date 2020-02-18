@@ -24,11 +24,11 @@ set(SIMDJSON_SRC_DIR $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>)
 set(SIMDJSON_SRC
   jsonioutil.cpp
   jsonminifier.cpp
-  jsonparser.cpp
   stage1_find_marks.cpp
   stage2_build_tape.cpp
   document.cpp
   document_parser.cpp
+  architecture.cpp
   error.cpp
 )
 

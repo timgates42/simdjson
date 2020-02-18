@@ -37,11 +37,11 @@ struct streaming_structural_parser: structural_parser {
  * The JSON is parsed to a tape, see the accompanying tape.md file
  * for documentation.
  ***********/
-WARN_UNUSED  int
+WARN_UNUSED  error_code
 unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_json) {
   static constexpr unified_machine_addresses addresses = INIT_ADDRESSES();
   streaming_structural_parser parser(buf, len, pj, next_json);
-  int result = parser.start(addresses.finish);
+  error_code result = parser.start(addresses.finish);
   if (result) { return result; }
   //
   // Read first value

@@ -8,6 +8,7 @@
 #include "haswell/bitmask.h"
 #include "haswell/simd.h"
 #include "haswell/bitmanipulation.h"
+#include "simdjson/document.h"
 #include "simdjson/stage1_find_marks.h"
 
 TARGET_HASWELL
@@ -52,10 +53,10 @@ really_inline simd8<bool> must_be_continuation(simd8<uint8_t> prev1, simd8<uint8
 UNTARGET_REGION
 
 TARGET_HASWELL
-namespace simdjson {
+namespace simdjson::internal {
 
-template <>
-int find_structural_bits<architecture::HASWELL>(const uint8_t *buf, size_t len, document::parser &parser, bool streaming) {
+template<>
+WARN_UNUSED error_code document_parser_implementation::for_architecture<architecture::HASWELL>::stage1(const uint8_t *buf, size_t len, document::parser &parser, bool streaming) const noexcept {
   return haswell::stage1::find_structural_bits<128>(buf, len, parser, streaming);
 }
 

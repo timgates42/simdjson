@@ -5,6 +5,7 @@
 
 #ifdef IS_X86_64
 
+#include "simdjson/document.h"
 #include "simdjson/stage2_build_tape.h"
 #include "haswell/stringparsing.h"
 #include "haswell/numberparsing.h"
@@ -19,18 +20,16 @@ namespace simdjson::haswell {
 UNTARGET_REGION
 
 TARGET_HASWELL
-namespace simdjson {
+namespace simdjson::internal {
 
-template <>
-WARN_UNUSED int
-unified_machine<architecture::HASWELL>(const uint8_t *buf, size_t len, ParsedJson &pj) {
-  return haswell::stage2::unified_machine(buf, len, pj);
+template<>
+WARN_UNUSED error_code document_parser_implementation::for_architecture<architecture::HASWELL>::stage2(const uint8_t *buf, size_t len, document::parser &parser) const noexcept {
+  return haswell::stage2::unified_machine(buf, len, parser);
 }
 
-template <>
-WARN_UNUSED int
-unified_machine<architecture::HASWELL>(const uint8_t *buf, size_t len, ParsedJson &pj, UNUSED size_t &next_json) {
-  return haswell::stage2::unified_machine(buf, len, pj, next_json);
+template<>
+WARN_UNUSED error_code document_parser_implementation::for_architecture<architecture::HASWELL>::stage2(const uint8_t *buf, size_t len, document::parser &parser, size_t &next_json) const noexcept {
+  return haswell::stage2::unified_machine(buf, len, parser, next_json);
 }
 
 } // namespace simdjson

@@ -1,4 +1,3 @@
-#include "json_parser.h"
 #include "event_counter.h"
 
 #include <cassert>
@@ -33,10 +32,7 @@
 #include "simdjson/common_defs.h"
 #include "simdjson/isadetection.h"
 #include "simdjson/jsonioutil.h"
-#include "simdjson/jsonparser.h"
-#include "simdjson/parsedjson.h"
-#include "simdjson/stage1_find_marks.h"
-#include "simdjson/stage2_build_tape.h"
+#include "simdjson/document.h"
 
 #include <functional>
 
@@ -146,6 +142,7 @@ struct option_struct {
     if (arch == architecture::UNSUPPORTED) {
       arch = find_best_supported_architecture();
     }
+    document::parser::use_implementation(arch);
 
     // All remaining arguments are considered to be files
     for (int i=optind; i<argc; i++) {
@@ -186,10 +183,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Set up benchmarkers by reading all files
-  json_parser parser(options.arch);
   vector<benchmarker*> benchmarkers;
   for (size_t i=0; i<options.files.size(); i++) {
-    benchmarkers.push_back(new benchmarker(options.files[i], parser, collector));
+    benchmarkers.push_back(new benchmarker(options.files[i], collector));
   }
 
   // Run the benchmarks

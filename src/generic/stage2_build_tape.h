@@ -277,11 +277,11 @@ struct structural_parser {
  * The JSON is parsed to a tape, see the accompanying tape.md file
  * for documentation.
  ***********/
-WARN_UNUSED  int
+WARN_UNUSED  error_code
 unified_machine(const uint8_t *buf, size_t len, document::parser &doc_parser) {
   static constexpr unified_machine_addresses addresses = INIT_ADDRESSES();
   structural_parser parser(buf, len, doc_parser);
-  int result = parser.start(addresses.finish);
+  error_code result = parser.start(addresses.finish);
   if (result) { return result; }
 
   //

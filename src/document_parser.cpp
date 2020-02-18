@@ -108,4 +108,20 @@ bool document::parser::dump_raw_tape(std::ostream &os) const {
   return is_valid() ? doc.dump_raw_tape(os) : false;
 }
 
+std::atomic<internal::document_parser_implementation*> document::parser::current_implementation = &internal::document_parser_implementation::find_best::singleton;
+
 } // namespace simdjson
+
+namespace simdjson::internal {
+
+template<architecture A>
+architecture document_parser_implementation::for_architecture<A>::get_architecture() const noexcept {
+  return A;
+}
+
+template<architecture A>
+document_parser_implementation::for_architecture<A> document_parser_implementation::for_architecture<A>::singleton{};
+
+document_parser_implementation::find_best document_parser_implementation::find_best::singleton{};
+
+} // namespace simdjson::internal

@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include "simdjson/common_defs.h"
 #include "simdjson/simdjson.h"
 #include "simdjson/padded_string.h"
@@ -59,6 +60,8 @@ public:
   static doc_result parse(const char *buf, size_t len, bool realloc_if_needed = true);
   static doc_result parse(const std::string &s, bool realloc_if_needed = true);
   static doc_result parse(const padded_string &s);
+  // We do not want to allow implicit conversion from C string to std::string.
+  doc_result parse(const char *buf, bool realloc_if_needed = true) = delete;
 
   std::unique_ptr<uint64_t[]> tape;
   std::unique_ptr<uint8_t[]> string_buf;// should be at least byte_capacity
@@ -85,6 +88,9 @@ public:
   }
   document doc;
   error_code error;
+  const std::string &get_error_message() {
+    return error_message(error);
+  }
 };
 
 class document::doc_ref_result {
@@ -101,6 +107,9 @@ public:
   }
   document& doc;
   error_code error;
+  const std::string &get_error_message() {
+    return error_message(error);
+  }
 };
 
 

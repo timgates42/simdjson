@@ -1,12 +1,62 @@
 #ifndef SIMDJSON_DOCUMENT_PARSER_H
 #define SIMDJSON_DOCUMENT_PARSER_H
 
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include "simdjson/common_defs.h"
 #include "simdjson/simdjson.h"
 #include "simdjson/document.h"
 #include "simdjson/padded_string.h"
+#include "simdjson/portability.h"
+
+// Declare the internal implementation classes first so we can reference them in document::parser
+namespace simdjson::internal {
+
+class document_parser_implementation {
+public:
+  virtual architecture get_architecture() const noexcept = 0;
+  WARN_UNUSED virtual error_code stage1(const uint8_t *buf, size_t len, document::parser &parser, bool streaming) const noexcept = 0;
+  WARN_UNUSED virtual error_code stage2(const uint8_t *buf, size_t len, document::parser &parser) const noexcept = 0;
+  WARN_UNUSED virtual error_code stage2(const uint8_t *buf, size_t len, document::parser &parser, size_t &next_json) const noexcept = 0;
+
+  static document_parser_implementation* get_implementation(architecture arch);
+  template<architecture A>
+  class for_architecture;
+  class find_best;
+};
+
+class document_parser_implementation::find_best final : public document_parser_implementation {
+public:
+  static find_best singleton;
+  architecture get_architecture() const noexcept override {
+    return get_best_implementation()->get_architecture();
+  }
+  WARN_UNUSED error_code stage1(const uint8_t *buf, size_t len, document::parser &parser, bool streaming) const noexcept final {
+    return get_best_implementation()->stage1(buf, len, parser, streaming);
+  }
+  WARN_UNUSED error_code stage2(const uint8_t *buf, size_t len, document::parser &parser) const noexcept final {
+    return get_best_implementation()->stage2(buf, len, parser);
+  }
+  WARN_UNUSED error_code stage2(const uint8_t *buf, size_t len, document::parser &parser, size_t &next_json) const noexcept final {
+    return get_best_implementation()->stage2(buf, len, parser, next_json);
+  }
+
+private:
+  document_parser_implementation *get_best_implementation() const;
+};
+
+template<architecture A>
+class document_parser_implementation::for_architecture final : public document_parser_implementation {
+public:
+  static document_parser_implementation::for_architecture<A> singleton;
+  architecture get_architecture() const noexcept final;
+  WARN_UNUSED error_code stage1(const uint8_t *buf, size_t len, document::parser &parser, bool streaming) const noexcept final;
+  WARN_UNUSED error_code stage2(const uint8_t *buf, size_t len, document::parser &parser) const noexcept final;
+  WARN_UNUSED error_code stage2(const uint8_t *buf, size_t len, document::parser &parser, size_t &next_json) const noexcept final;
+};
+
+} // namespace simdjson::internal
 
 namespace simdjson {
 
@@ -37,6 +87,8 @@ public:
   inline doc_ref_result parse(const char *buf, size_t len, bool realloc_if_needed = true);
   inline doc_ref_result parse(const std::string &s, bool realloc_if_needed = true);
   inline doc_ref_result parse(const padded_string &s);
+  // We do not want to allow implicit conversion from C string to std::string.
+  doc_ref_result parse(const char *buf, bool realloc_if_needed = true) = delete;
 
   //
   // Current capacity: the largest document this parser can support without reallocating.
@@ -224,6 +276,11 @@ public:
     return doc;
   }
 
+  static internal::document_parser_implementation *use_implementation(architecture arch);
+  static internal::document_parser_implementation *get_implementation() {
+    return current_implementation;
+  }
+
 private:
   //
   // The maximum document length this parser supports.
@@ -238,6 +295,11 @@ private:
   // Defaults to DEFAULT_MAX_DEPTH.
   //
   size_t _max_depth{0};
+
+  //
+  // The implementation that will be used
+  //
+  static std::atomic<internal::document_parser_implementation*> current_implementation;
 
   // all nodes are stored on the doc.tape using a 64-bit word.
   //
@@ -281,239 +343,6 @@ private:
   WARN_UNUSED bool set_max_depth(size_t max_depth);
 };
 
-//
-// C API (json_parse and build_parsed_json) declarations
-//
-
-// Parse a document found in buf.
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)).
-//
-// The function returns simdjson::SUCCESS (an integer = 0) in case of a success
-// or an error code from simdjson/simdjson.h in case of failure such as
-// simdjson::CAPACITY, simdjson::MEMALLOC, simdjson::DEPTH_ERROR and so forth;
-// the simdjson::error_message function converts these error codes into a
-// string).
-//
-// You can also check validity by calling parser.is_valid(). The same document::parser can
-// be reused for other documents.
-//
-// If realloc_if_needed is true (default) then a temporary buffer is created
-// when needed during processing (a copy of the input string is made). The input
-// buf should be readable up to buf + len + SIMDJSON_PADDING if
-// realloc_if_needed is false, all bytes at and after buf + len  are ignored
-// (can be garbage). The document::parser object can be reused.
-
-int json_parse(const uint8_t *buf, size_t len, document::parser &parser,
-               bool realloc_if_needed = true);
-
-// Parse a document found in buf.
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)).
-//
-// The function returns simdjson::SUCCESS (an integer = 0) in case of a success
-// or an error code from simdjson/simdjson.h in case of failure such as
-// simdjson::CAPACITY, simdjson::MEMALLOC, simdjson::DEPTH_ERROR and so forth;
-// the simdjson::error_message function converts these error codes into a
-// string).
-//
-// You can also check validity
-// by calling parser.is_valid(). The same document::parser can be reused for other
-// documents.
-//
-// If realloc_if_needed is true (default) then a temporary buffer is created
-// when needed during processing (a copy of the input string is made). The input
-// buf should be readable up to buf + len + SIMDJSON_PADDING  if
-// realloc_if_needed is false, all bytes at and after buf + len  are ignored
-// (can be garbage). The document::parser object can be reused.
-int json_parse(const char *buf, size_t len, document::parser &parser,
-               bool realloc_if_needed = true);
-
-// We do not want to allow implicit conversion from C string to std::string.
-int json_parse(const char *buf, document::parser &parser) = delete;
-
-// Parse a document found in in string s.
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)).
-//
-// The function returns simdjson::SUCCESS (an integer = 0) in case of a success
-// or an error code from simdjson/simdjson.h in case of failure such as
-// simdjson::CAPACITY, simdjson::MEMALLOC, simdjson::DEPTH_ERROR and so forth;
-// the simdjson::error_message function converts these error codes into a
-// string).
-//
-// A temporary buffer is created when needed during processing
-// (a copy of the input string is made).
-inline int json_parse(const std::string &s, document::parser &parser) {
-  return json_parse(s.data(), s.length(), parser, true);
-}
-
-// Parse a document found in in string s.
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)).
-//
-// The function returns simdjson::SUCCESS (an integer = 0) in case of a success
-// or an error code from simdjson/simdjson.h in case of failure such as
-// simdjson::CAPACITY, simdjson::MEMALLOC, simdjson::DEPTH_ERROR and so forth;
-// the simdjson::error_message function converts these error codes into a
-// string).
-//
-// You can also check validity
-// by calling parser.is_valid(). The same document::parser can be reused for other
-// documents.
-inline int json_parse(const padded_string &s, document::parser &parser) {
-  return json_parse(s.data(), s.length(), parser, false);
-}
-
-// Build a document::parser object. You can check validity
-// by calling parser.is_valid(). This does the memory allocation needed for
-// document::parser. If realloc_if_needed is true (default) then a temporary buffer is
-// created when needed during processing (a copy of the input string is made).
-//
-// The input buf should be readable up to buf + len + SIMDJSON_PADDING  if
-// realloc_if_needed is false, all bytes at and after buf + len  are ignored
-// (can be garbage).
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// This is a convenience function which calls json_parse.
-WARN_UNUSED
-document::parser build_parsed_json(const uint8_t *buf, size_t len,
-                             bool realloc_if_needed = true);
-
-WARN_UNUSED
-// Build a document::parser object. You can check validity
-// by calling parser.is_valid(). This does the memory allocation needed for
-// document::parser. If realloc_if_needed is true (default) then a temporary buffer is
-// created when needed during processing (a copy of the input string is made).
-//
-// The input buf should be readable up to buf + len + SIMDJSON_PADDING if
-// realloc_if_needed is false, all bytes at and after buf + len  are ignored
-// (can be garbage).
-//
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// This is a convenience function which calls json_parse.
-inline document::parser build_parsed_json(const char *buf, size_t len,
-                                    bool realloc_if_needed = true) {
-  return build_parsed_json(reinterpret_cast<const uint8_t *>(buf), len,
-                           realloc_if_needed);
-}
-
-// We do not want to allow implicit conversion from C string to std::string.
-document::parser build_parsed_json(const char *buf) = delete;
-
-// Parse a document found in in string s.
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)). Return SUCCESS (an integer = 0) in case of a
-// success. You can also check validity by calling parser.is_valid(). The same
-// document::parser can be reused for other documents.
-//
-// A temporary buffer is created when needed during processing
-// (a copy of the input string is made).
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// This is a convenience function which calls json_parse.
-WARN_UNUSED
-inline document::parser build_parsed_json(const std::string &s) {
-  return build_parsed_json(s.data(), s.length(), true);
-}
-
-// Parse a document found in in string s.
-// You need to preallocate document::parser with a capacity of len (e.g.,
-// parser.allocate_capacity(len)). Return SUCCESS (an integer = 0) in case of a
-// success. You can also check validity by calling parser.is_valid(). The same
-// document::parser can be reused for other documents.
-//
-// The content should be a valid JSON document encoded as UTF-8. If there is a
-// UTF-8 BOM, the caller is responsible for omitting it, UTF-8 BOM are
-// discouraged.
-//
-// This is a convenience function which calls json_parse.
-WARN_UNUSED
-inline document::parser build_parsed_json(const padded_string &s) {
-  return build_parsed_json(s.data(), s.length(), false);
-}
-
-
-//
-// Stage 1 implementation declarations
-//
-
-// Setting the streaming parameter to true allows the find_structural_bits to tolerate unclosed strings.
-// The caller should still ensure that the input is valid UTF-8. If you are processing substrings,
-// you may want to call on a function like trimmed_length_safe_utf8.
-// A function like find_last_json_buf_idx may also prove useful.
-template <architecture T = architecture::NATIVE>
-int find_structural_bits(const uint8_t *buf, size_t len, document::parser &parser, bool streaming);
-
-// Setting the streaming parameter to true allows the find_structural_bits to tolerate unclosed strings.
-// The caller should still ensure that the input is valid UTF-8. If you are processing substrings,
-// you may want to call on a function like trimmed_length_safe_utf8.
-// A function like find_last_json_buf_idx may also prove useful.
-template <architecture T = architecture::NATIVE>
-int find_structural_bits(const char *buf, size_t len, document::parser &parser, bool streaming) {
-  return find_structural_bits<T>((const uint8_t *)buf, len, parser, streaming);
-}
-
-template <architecture T = architecture::NATIVE>
-int find_structural_bits(const uint8_t *buf, size_t len, document::parser &parser) {
-  return find_structural_bits<T>(buf, len, parser, false);
-}
-
-template <architecture T = architecture::NATIVE>
-int find_structural_bits(const char *buf, size_t len, document::parser &parser) {
-  return find_structural_bits<T>((const uint8_t *)buf, len, parser);
-}
-
-//
-// Stage 2 implementation declarations
-//
-
-template <architecture T = architecture::NATIVE>
-WARN_UNUSED int
-unified_machine(const uint8_t *buf, size_t len, document::parser &parser);
-
-template <architecture T = architecture::NATIVE>
-WARN_UNUSED int
-unified_machine(const char *buf, size_t len, document::parser &parser) {
-  return unified_machine<T>(reinterpret_cast<const uint8_t *>(buf), len, parser);
-}
-
-
-// Streaming
-template <architecture T = architecture::NATIVE>
-WARN_UNUSED int
-unified_machine(const uint8_t *buf, size_t len, document::parser &parser, size_t &next_json);
-
-template <architecture T = architecture::NATIVE>
-int unified_machine(const char *buf, size_t len, document::parser &parser, size_t &next_json) {
-    return unified_machine<T>(reinterpret_cast<const uint8_t *>(buf), len, parser, next_json);
-}
-
 } // namespace simdjson
 
 //
@@ -524,10 +353,75 @@ int unified_machine(const char *buf, size_t len, document::parser &parser, size_
 #include "simdjson/stage1_find_marks.h"
 #include "simdjson/stage2_build_tape.h"
 
+namespace simdjson::internal {
+
+inline document_parser_implementation* document_parser_implementation::get_implementation(architecture arch) {
+  switch (arch) {
+#ifdef IS_X86_64
+    case architecture::HASWELL: return &for_architecture<architecture::HASWELL>::singleton;
+    case architecture::WESTMERE: return &for_architecture<architecture::WESTMERE>::singleton;
+#endif
+#ifdef IS_ARM64
+    case architecture::ARM64: return &for_architecture<architecture::ARM64>::singleton;
+#endif
+    default: return nullptr;
+  }
+}
+
+inline document_parser_implementation* document_parser_implementation::find_best::get_best_implementation() const {
+  return document::parser::use_implementation(find_best_supported_architecture());
+}
+
+template<architecture A>
+error_code document_parser_implementation::for_architecture<A>::stage1(UNUSED const uint8_t *buf, UNUSED size_t len, document::parser &parser, UNUSED bool streaming) const noexcept {
+  return parser.on_error(UNEXPECTED_ERROR);
+}
+template<architecture A>
+error_code document_parser_implementation::for_architecture<A>::stage2(UNUSED const uint8_t *buf, UNUSED size_t len, document::parser &parser) const noexcept {
+  return parser.on_error(UNEXPECTED_ERROR);
+}
+template<architecture A>
+error_code document_parser_implementation::for_architecture<A>::stage2(UNUSED const uint8_t *buf, UNUSED size_t len, document::parser &parser, UNUSED size_t &next_json) const noexcept {
+  return parser.on_error(UNEXPECTED_ERROR);
+}
+
+
+} // namespace simdjson::internal
+
 namespace simdjson {
 
-inline document::doc_ref_result document::parser::parse(const uint8_t *buf, size_t len, bool realloc_if_needed) {
-  auto code = (error_code)json_parse(buf, len, *this, realloc_if_needed);
+inline internal::document_parser_implementation *document::parser::use_implementation(architecture arch) {
+  return current_implementation = internal::document_parser_implementation::get_implementation(arch);
+}
+
+// TODO inline?
+document::doc_ref_result document::parser::parse(const uint8_t *buf, size_t len, bool realloc_if_needed) {
+  error_code code = init_parse(len);
+  if (code != SUCCESS) { return document::doc_ref_result(doc, code); }
+
+  bool reallocated = false;
+  if (realloc_if_needed) {
+    const uint8_t *tmp_buf = buf;
+    buf = (uint8_t *)allocate_padded_buffer(len);
+    if (buf == nullptr)
+      return document::doc_ref_result(doc, MEMALLOC);
+    memcpy((void *)buf, tmp_buf, len);
+    reallocated = true;
+  }
+
+  code = current_implementation.load()->stage1(buf, len, *this, false);
+  if (code != simdjson::SUCCESS) {
+    if (reallocated) { // must free before we exit
+      aligned_free((void *)buf);
+    }
+    return document::doc_ref_result(doc, code);
+  }
+
+  code = current_implementation.load()->stage2(buf, len, *this);
+  if (reallocated) {
+    aligned_free((void *)buf);
+  }
+
   valid = false;
   error = UNINITIALIZED;
   return document::doc_ref_result(doc, code);
@@ -558,38 +452,6 @@ inline document::doc_result document::parse(const std::string &s, bool realloc_i
 }
 inline document::doc_result document::parse(const padded_string &s) {
     return parse(s.data(), s.length(), false);
-}
-
-// json_parse_implementation is the generic function, it is specialized for
-// various architectures, e.g., as
-// json_parse_implementation<architecture::HASWELL> or
-// json_parse_implementation<architecture::ARM64>
-template <architecture T>
-int json_parse_implementation(const uint8_t *buf, size_t len, document::parser &parser,
-                              bool realloc_if_needed = true) {
-  int result = parser.init_parse(len);
-  if (result != SUCCESS) { return result; }
-  bool reallocated = false;
-  if (realloc_if_needed) {
-      const uint8_t *tmp_buf = buf;
-      buf = (uint8_t *)allocate_padded_buffer(len);
-      if (buf == NULL)
-        return simdjson::MEMALLOC;
-      memcpy((void *)buf, tmp_buf, len);
-      reallocated = true;
-  }
-  int stage1_err = simdjson::find_structural_bits<T>(buf, len, parser);
-  if (stage1_err != simdjson::SUCCESS) {
-    if (reallocated) { // must free before we exit
-      aligned_free((void *)buf);
-    }
-    return stage1_err;
-  }
-  int res = unified_machine<T>(buf, len, parser);
-  if (reallocated) {
-    aligned_free((void *)buf);
-  }
-  return res;
 }
 
 } // namespace simdjson
